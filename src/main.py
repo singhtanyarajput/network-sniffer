@@ -1,6 +1,8 @@
-
+import queue
 import sys
-from src.capture import capture_packets
+from multiprocessing import Event, Process, Queue
+
+from src.capture import capture_worker
 from src.parsers.ethernet import parse_ethernet
 from src.parsers.ipv4 import parse_ipv4
 from src.parsers.tcp_udp import parse_tcp, parse_udp
@@ -10,9 +12,25 @@ def main() -> int:
     print("[*] Sentinel Sniffer starting...")
     print("[*] Listening for packets... (Ctrl+C to stop)\n")
 
+    packet_queue = Queue()
+    stop_event = Event()
+
+    capture_process = Process(
+        target=capture_worker,
+        args=(packet_queue, stop_event),
+    )
+    capture_process.start()
+
     count = 0
     try:
-        for raw_data, interface in capture_packets():
+        while not stop_event.is_set():
+            try:
+                raw_data, interface = packet_queue.get(timeout=1)
+            except queue.Empty:
+                if not capture_process.is_alive():
+                    break
+                continue
+
             count += 1
             print(f"[{count:05}] {interface:<8} {len(raw_data):>5} bytes")
             dest_mac, src_mac, eth_proto, eth_payload = parse_ethernet(raw_data)
@@ -38,14 +56,14 @@ def main() -> int:
                     )
                 elif protocol == 1:
                     print("    ICMP: Control frame (ping)")
-    except PermissionError:  # must come before OSError (it's a subclass)
-        print("[!] Permission denied. Raw sockets require root, so run with sudo.")
-        return 1
-    except OSError as e:
-        print(f"[!] Socket error: {e}")
-        return 1
     except KeyboardInterrupt:
         print(f"\n[*] Sniffer stopped. {count} packets captured.")
+        stop_event.set()
+        capture_process.join()
+        return 0
+
+    stop_event.set()
+    capture_process.join()
     return 0
 
 
