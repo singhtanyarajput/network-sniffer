@@ -44,5 +44,7 @@ def capture_worker(packet_queue, stop_event, interface: Optional[str] = None) ->
             if readable:
                 raw_data, addr = sock.recvfrom(MAX_FRAME_SIZE)
                 packet_queue.put((raw_data, addr[0]))
+    except KeyboardInterrupt:
+        pass
     finally:
         sock.close()
