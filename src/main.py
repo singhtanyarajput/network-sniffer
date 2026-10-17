@@ -1,3 +1,4 @@
+import argparse
 import os
 import queue
 import sys
@@ -12,8 +13,14 @@ from src.pcap_writer import PCAPWriter
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description="Sentinel Network Sniffer")
+    parser.add_argument(
+        "-i", "--interface", default="eth0", help="Network interface to sniff"
+    )
+    args = parser.parse_args()
+
     print("[*] Sentinel Sniffer starting...")
-    print("[*] Listening for packets... (Ctrl+C to stop)\n")
+    print(f"[*] Listening on interface {args.interface}... (Ctrl+C to stop)\n")
 
     os.makedirs("data/captures", exist_ok=True)
     pcap_writer = PCAPWriter("data/captures/live_capture.pcap")
@@ -23,7 +30,7 @@ def main() -> int:
 
     capture_process = Process(
         target=capture_worker,
-        args=(packet_queue, stop_event),
+        args=(packet_queue, stop_event, args.interface),
     )
     capture_process.start()
 

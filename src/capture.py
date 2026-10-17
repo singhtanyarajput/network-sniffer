@@ -4,12 +4,42 @@ Job: pull raw bytes off the network card and push them to a processing queue.
 It does NOT parse, print, or decide anything.
 """
 
+import ctypes
+import fcntl
 import select
 import socket
 from typing import Optional
 
 ETH_P_ALL = 0x0003       # Linux constant meaning "give me every protocol"
 MAX_FRAME_SIZE = 65535   # largest buffer we'll accept for one packet
+
+SIOCGIFFLAGS = 0x8913    # ioctl: get interface flags
+SIOCSIFFLAGS = 0x8914    # ioctl: set interface flags
+IFF_PROMISC = 0x100      # Promiscuous mode flag
+
+
+class ifreq(ctypes.Structure):
+    """Structure for passing interface requests to ioctl."""
+
+    _fields_ = [
+        ("ifr_name", ctypes.c_char * 16),
+        ("ifr_flags", ctypes.c_short),
+        ("_pad", ctypes.c_byte * 22),
+    ]
+
+
+def set_promiscuous_mode(
+    sock: socket.socket, interface_name: str, enable: bool = True
+) -> None:
+    """Enable or disable promiscuous mode on the specified network interface."""
+    ifr = ifreq()
+    ifr.ifr_name = interface_name.encode("utf-8")[:15]
+    fcntl.ioctl(sock, SIOCGIFFLAGS, ifr)
+    if enable:
+        ifr.ifr_flags |= IFF_PROMISC
+    else:
+        ifr.ifr_flags &= ~IFF_PROMISC
+    fcntl.ioctl(sock, SIOCSIFFLAGS, ifr)
 
 
 def create_raw_socket(interface: Optional[str] = None) -> socket.socket:
@@ -22,7 +52,9 @@ def create_raw_socket(interface: Optional[str] = None) -> socket.socket:
     return sock
 
 
-def capture_worker(packet_queue, stop_event, interface: Optional[str] = None) -> None:
+def capture_worker(
+    packet_queue, stop_event, interface: str = "eth0"
+) -> None:
     """Capture raw packets in a loop and push (raw_data, interface) into packet_queue."""
     try:
         sock = create_raw_socket(interface)
@@ -36,6 +68,11 @@ def capture_worker(packet_queue, stop_event, interface: Optional[str] = None) ->
         return
 
     try:
+        set_promiscuous_mode(sock, interface, enable=True)
+    except Exception as e:
+        print(f"[!] Warning: Could not enable promiscuous mode on {interface}: {e}")
+
+    try:
         while True:
             if stop_event.is_set():
                 break
@@ -47,4 +84,8 @@ def capture_worker(packet_queue, stop_event, interface: Optional[str] = None) ->
     except KeyboardInterrupt:
         pass
     finally:
+        try:
+            set_promiscuous_mode(sock, interface, enable=False)
+        except Exception:
+            pass
         sock.close()
